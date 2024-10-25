@@ -16,6 +16,7 @@ import yaml
 from urllib.parse import urlencode
 import copy
 from optparse import OptionParser
+import html 
 
 
 class CheckPyCurlOptions(object):
@@ -128,6 +129,15 @@ class CheckPyCurl(object):
     def create_curl_obj(self):
         """create pycurl object & set options"""
         c = pycurl.Curl()
+        if 'PREV_MATCH_' in self.options.url:
+            url = self.options.url
+            check_postdata = re.match(r'.*PREV_MATCH_(\d+)_(\d+)$', url)
+            if check_postdata is not None:
+                (url_match_stage, url_match_num) = (int(check_postdata.group(1)),
+                                                    int(check_postdata.group(2)))
+                replacement = html.unescape(self.prev_matches[url_match_stage].group(url_match_num))
+                url = url.replace('PREV_MATCH_'+str(url_match_stage)+'_'+str(url_match_num),replacement)
+                self.options.url = url
         self._set_manual_options(c)
         if getattr(self.options, "cookiejar", False):
             c.setopt(pycurl.COOKIEJAR, self.options.tmpfile)
@@ -172,6 +182,9 @@ class CheckPyCurl(object):
             resp_data = urlencode(post_params)
             c.setopt(pycurl.POSTFIELDS, resp_data)
             c.setopt(pycurl.POST, 1)
+        if getattr(self.options,'referer',None) is not None:
+            #print("referer:"+ self.options.referer)
+            c.setopt(pycurl.REFERER, self.options.referer)
         return c
 
     def _set_manual_options(self, c):
@@ -179,10 +192,11 @@ class CheckPyCurl(object):
         c.setopt(c.URL, self.options.url)
         c.setopt(c.CONNECTTIMEOUT, self.options.connecttimeout)
         c.setopt(c.TIMEOUT, self.options.timeout)
-        c.setopt(c.FOLLOWLOCATION, self.options.location)
+        c.setopt(c.FOLLOWLOCATION, 1)
         c.setopt(c.SSL_VERIFYPEER, not self.options.insecure)
         c.setopt(c.USERAGENT, self.options.user_agent)
         c.setopt(c.VERBOSE, self.options.debug)
+
 
     def curl(self):
         """make the request"""
@@ -193,12 +207,17 @@ class CheckPyCurl(object):
         # send the request
         try:
             c.perform()
+            self.options.referer = c.getinfo(pycurl.EFFECTIVE_URL)
             self.content = buf.getvalue().decode("utf-8")
             self.results["rc"] = 0
             self.results["status"] = "%s returned HTTP %s" % (
                 self.options.url,
                 c.getinfo(pycurl.HTTP_CODE),
             )
+            if self.options.debug:
+                print(self.content)
+                print(c.getinfo(pycurl.HTTP_CODE))
+                print(c.getinfo(pycurl.EFFECTIVE_URL))
             # check results
             if self.successtest == "code":
                 if int(self.successcheck) != int(c.getinfo(pycurl.HTTP_CODE)):
